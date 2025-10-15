@@ -1,23 +1,26 @@
 """
-Dungeon Crawler RL Environment - 16×16 with Global Vision
+Dungeon Crawler RL Environment - 32×32 with Global Vision
 
 A custom Gymnasium environment for navigation with full observability.
 
 Features:
-- 16×16 grid with border walls
-- Agent with GLOBAL vision (sees entire 16×16 grid)
+- 32×32 grid with randomly placed interior walls (10% density)
+- Agent with GLOBAL vision (sees entire 32×32 grid)
 - 2 mobile enemies with random movement (instant death on contact)
 - Door/exit objective
-- Reward structure (SHAPED + SPARSE):
-  * Reach door: +100.0 (victory)
-  * Move closer: +1.0 - 0.1 = +0.9 (net positive)
-  * Move away: -1.0 - 0.1 = -1.1 (net negative)
-  * Enemy collision: -100.0 (death, terminated)
+- Wall generation with guaranteed path to door (BFS validation)
+
+Reward Structure (SHAPED + SPARSE):
+  * Reach door: +200.0 (victory, terminated) 🎯
+  * Move closer to door: +1.0 - 0.1 = +0.9 (net positive)
+  * Move away from door: -1.0 - 0.1 = -1.1 (net negative)
+  * Wall collision: -1.0 - 0.1 = -1.1 (penalty, continues playing)
+  * Enemy collision: -100.0 (INSTANT DEATH, terminated) ⚠️
   * Step penalty: -0.1 (always applied)
 
 State Space:
-- Global view: Full 16×16 grid
-- Agent position encoding (for state encoding)
+- Global view: Full 32×32 grid
+- State encoding: Agent position (30×30) × Door position (30×30) = 810,000 states
 - Full observability makes learning easier
 
 Action Space (4 movements):
@@ -70,7 +73,9 @@ class DungeonCrawlerEnv(gym.Env):
         self,
         render_mode: Optional[str] = None,
         max_steps: int = 300,
-        grid_size: int = 16
+        grid_size: int = 32,
+        wall_density: float = 0.10,
+        wall_collision_penalty: float = -1.0
     ):
         """
         Initialize the environment with global vision.
@@ -78,13 +83,17 @@ class DungeonCrawlerEnv(gym.Env):
         Args:
             render_mode: Rendering mode ('human', 'ansi', 'pygame', or None)
             max_steps: Maximum steps per episode (default: 300)
-            grid_size: Size of the square grid (default: 16)
+            grid_size: Size of the square grid (default: 32)
+            wall_density: Probability of wall placement (0.0-1.0, default: 0.10)
+            wall_collision_penalty: Penalty for attempting to move into a wall (default: -1.0)
         """
         super().__init__()
 
         self.grid_size = grid_size
         self.max_steps = max_steps
         self.render_mode = render_mode
+        self.wall_density = wall_density
+        self.wall_collision_penalty = wall_collision_penalty
 
         # PyGame renderer (lazy initialization)
         self.pygame_renderer = None
@@ -93,7 +102,7 @@ class DungeonCrawlerEnv(gym.Env):
                 from environment.render_pygame import PyGameRenderer
                 self.pygame_renderer = PyGameRenderer(
                     grid_size=grid_size,
-                    cell_size=48,  # Larger cells for better visibility (768×848 window)
+                    cell_size=32,  # 32px cells for 16×16 viewport (512×612 window)
                     fps=self.metadata['render_fps']
                 )
             except ImportError:
@@ -146,6 +155,102 @@ class DungeonCrawlerEnv(gym.Env):
         self.grid[:, 0] = 1
         self.grid[:, -1] = 1
 
+    def _is_path_exists(self, start_pos: Tuple[int, int], end_pos: Tuple[int, int]) -> bool:
+        """
+        Check if a path exists between start and end positions using BFS.
+
+        Args:
+            start_pos: Starting position (y, x)
+            end_pos: Target position (y, x)
+
+        Returns:
+            True if path exists, False otherwise
+        """
+        from collections import deque
+
+        # BFS to check connectivity
+        queue = deque([start_pos])
+        visited = {start_pos}
+
+        while queue:
+            current_y, current_x = queue.popleft()
+
+            # Check if we reached the goal
+            if (current_y, current_x) == end_pos:
+                return True
+
+            # Explore neighbors (UP, DOWN, LEFT, RIGHT)
+            for dy, dx in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+                new_y, new_x = current_y + dy, current_x + dx
+                new_pos = (new_y, new_x)
+
+                # Check if valid position
+                if (0 <= new_y < self.grid_size and
+                    0 <= new_x < self.grid_size and
+                    new_pos not in visited and
+                    self.grid[new_y, new_x] != 1):  # Not a wall
+                    visited.add(new_pos)
+                    queue.append(new_pos)
+
+        return False
+
+    def _pathfinding_distance(self, start_pos: Tuple[int, int], end_pos: Tuple[int, int]) -> float:
+        """
+        Calculate the shortest path distance between two positions using BFS.
+        Takes walls into account, so the returned distance is the actual number
+        of steps needed to reach the goal, not the straight-line Manhattan distance.
+
+        Args:
+            start_pos: Starting position (y, x)
+            end_pos: Target position (y, x)
+
+        Returns:
+            float: Number of steps in shortest path, or float('inf') if no path exists
+        """
+        from collections import deque
+
+        # Special case: already at goal
+        if start_pos == end_pos:
+            return 0
+
+        # BFS with distance tracking
+        queue = deque([(start_pos, 0)])  # (position, distance)
+        visited = {start_pos}
+
+        while queue:
+            (current_y, current_x), dist = queue.popleft()
+
+            # Explore neighbors (UP, DOWN, LEFT, RIGHT)
+            for dy, dx in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+                new_y, new_x = current_y + dy, current_x + dx
+                new_pos = (new_y, new_x)
+
+                # Check if we reached the goal
+                if new_pos == end_pos:
+                    return dist + 1
+
+                # Check if valid position
+                if (0 <= new_y < self.grid_size and
+                    0 <= new_x < self.grid_size and
+                    new_pos not in visited and
+                    self.grid[new_y, new_x] != 1):  # Not a wall
+                    visited.add(new_pos)
+                    queue.append((new_pos, dist + 1))
+
+        # No path exists
+        return float('inf')
+
+    def _place_random_walls(self):
+        """
+        Place random walls in the interior of the grid (not on borders).
+        Uses wall_density parameter to determine probability of wall placement.
+        """
+        # Place walls randomly in interior cells
+        for y in range(1, self.grid_size - 1):
+            for x in range(1, self.grid_size - 1):
+                if np.random.random() < self.wall_density:
+                    self.grid[y, x] = 1
+
     def _get_random_floor_position(self, exclude_positions=None) -> Tuple[int, int]:
         """
         Get a random floor position (not on walls or excluded positions).
@@ -181,6 +286,8 @@ class DungeonCrawlerEnv(gym.Env):
         Reset the environment to initial state.
 
         Generates a new 16×16 grid with random spawn positions for agent, door, and 2 enemies.
+        Ensures that walls are placed such that the door is always reachable from the agent's
+        starting position.
 
         Args:
             seed: Random seed for reproducibility
@@ -192,19 +299,41 @@ class DungeonCrawlerEnv(gym.Env):
         """
         super().reset(seed=seed)
 
-        # Create empty grid
+        # Create empty grid with border walls
         self._create_empty_grid()
 
         # Reset state
         self._init_state()
 
-        # Random spawn positions
-        agent_pos_tuple = self._get_random_floor_position()
-        self.agent_pos = list(agent_pos_tuple)
+        # Generate valid dungeon layout (with accessible door)
+        max_attempts = 100
+        for attempt in range(max_attempts):
+            # Start fresh with empty grid
+            self._create_empty_grid()
 
-        self.door_pos = self._get_random_floor_position(
-            exclude_positions=[agent_pos_tuple]
-        )
+            # Place random walls
+            self._place_random_walls()
+
+            # Random spawn positions for agent and door
+            agent_pos_tuple = self._get_random_floor_position()
+            self.agent_pos = list(agent_pos_tuple)
+
+            self.door_pos = self._get_random_floor_position(
+                exclude_positions=[agent_pos_tuple]
+            )
+
+            # Check if path exists from agent to door
+            if self._is_path_exists(agent_pos_tuple, self.door_pos):
+                # Valid layout found!
+                break
+        else:
+            # Fallback: if no valid layout found, use empty grid
+            self._create_empty_grid()
+            agent_pos_tuple = self._get_random_floor_position()
+            self.agent_pos = list(agent_pos_tuple)
+            self.door_pos = self._get_random_floor_position(
+                exclude_positions=[agent_pos_tuple]
+            )
 
         # Spawn 2 enemies in random positions
         enemy1_pos_tuple = self._get_random_floor_position(
@@ -217,8 +346,8 @@ class DungeonCrawlerEnv(gym.Env):
         )
         self.enemy2_pos = list(enemy2_pos_tuple)
 
-        # Initialize distance tracking for reward shaping
-        self.prev_dist_to_door = self._manhattan_dist(tuple(self.agent_pos), self.door_pos)
+        # Initialize distance tracking for reward shaping (use REAL pathfinding distance)
+        self.prev_dist_to_door = self._pathfinding_distance(tuple(self.agent_pos), self.door_pos)
 
         observation = self._get_obs()
         info = self._get_info()
@@ -248,10 +377,15 @@ class DungeonCrawlerEnv(gym.Env):
         # Initialize reward with step penalty (always applied)
         reward = -0.1
 
-        # Execute movement action
+        # Execute movement action and check for wall collision
+        wall_collision = False
         if action in [self.ACTION_UP, self.ACTION_DOWN,
                      self.ACTION_LEFT, self.ACTION_RIGHT]:
-            self._handle_movement(action)
+            movement_success = self._handle_movement(action)
+            if not movement_success:
+                # Wall collision detected - apply penalty but continue playing
+                wall_collision = True
+                reward += self.wall_collision_penalty  # Penalty for hitting wall
 
         # Move enemies (random movement)
         self._move_enemies()
@@ -267,17 +401,18 @@ class DungeonCrawlerEnv(gym.Env):
             info['death_reason'] = 'enemy_collision'
             return observation, reward, terminated, False, info
 
-        # Calculate current distance to door
-        current_dist = self._manhattan_dist(agent_pos_tuple, self.door_pos)
+        # Calculate current REAL distance to door (using pathfinding, not straight-line)
+        current_dist = self._pathfinding_distance(agent_pos_tuple, self.door_pos)
 
-        # Reward shaping based on distance change
+        # Reward shaping based on REAL distance change (accounts for walls)
         if current_dist < self.prev_dist_to_door:
-            # Moved closer: +1.0 - 0.1 = +0.9 net
+            # Moved closer on REAL path: +1.0 - 0.1 = +0.9 net
+            # This correctly rewards moving backward if that's the shorter path around walls
             reward += 1.0
         elif current_dist > self.prev_dist_to_door:
-            # Moved away: -1.0 - 0.1 = -1.1 net (discourages loops)
+            # Moved away on REAL path: -1.0 - 0.1 = -1.1 net
             reward -= 1.0
-        # If distance stays same (hit wall): just -0.1 penalty
+        # If distance stays same (hit wall or lateral move): just -0.1 penalty
 
         # Update previous distance for next step
         self.prev_dist_to_door = current_dist
@@ -288,7 +423,7 @@ class DungeonCrawlerEnv(gym.Env):
 
         # Win condition: reached door
         if agent_pos_tuple == self.door_pos:
-            reward += 100.0  # DOOR REWARD (victory)
+            reward += 200.0  # DOOR REWARD (victory)
             terminated = True
 
         # Max steps reached
@@ -303,12 +438,15 @@ class DungeonCrawlerEnv(gym.Env):
 
         return observation, reward, terminated, truncated, info
 
-    def _handle_movement(self, action: int):
+    def _handle_movement(self, action: int) -> bool:
         """
-        Handle movement actions (no penalties for wall collision).
+        Handle movement actions and detect wall collisions.
 
         Args:
             action: Movement action (0-3)
+
+        Returns:
+            bool: True if movement was successful, False if blocked by wall
         """
         # Calculate new position
         new_pos = self.agent_pos.copy()
@@ -324,17 +462,18 @@ class DungeonCrawlerEnv(gym.Env):
         # Check if new position is valid (not wall)
         new_pos_tuple = tuple(new_pos)
 
-        # Check walls - just block movement
-        if self.grid[new_pos_tuple] == 1:
-            return  # Wall collision - no movement
-
-        # Check grid bounds
+        # Check grid bounds first
         if not (0 <= new_pos[0] < self.grid_size and
                 0 <= new_pos[1] < self.grid_size):
-            return  # Out of bounds - no movement
+            return False  # Out of bounds - wall collision
+
+        # Check walls - block movement and return collision status
+        if self.grid[new_pos_tuple] == 1:
+            return False  # Wall collision - no movement
 
         # Valid move - update position
         self.agent_pos = new_pos
+        return True  # Successful movement
 
     def _move_enemies(self):
         """

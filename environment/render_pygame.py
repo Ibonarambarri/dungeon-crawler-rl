@@ -1,10 +1,11 @@
 """
-PyGame Renderer for Dungeon Crawler - 16×16 with Global Vision
+PyGame Renderer for Dungeon Crawler - 32×32 with Global Vision
 
-Renders the 16×16 dungeon with camera system centered on agent.
+Renders the 32×32 dungeon with camera system centered on agent.
 Features:
-- Camera system following the agent
-- Full 16×16 grid visibility
+- Camera system following the agent (shows viewport of full grid)
+- Agent has GLOBAL vision (sees entire 32×32 grid)
+- Camera viewport shows portion around agent for rendering
 - Enemy sprites with distinct appearance
 - Smooth rendering with proper layering
 """
@@ -17,11 +18,12 @@ import sys
 
 class PyGameRenderer:
     """
-    PyGame renderer for 16×16 dungeon with global vision (full grid display).
+    PyGame renderer for 32×32 dungeon with global vision.
 
     Features:
-    - Shows entire 16×16 grid at once (no camera system)
-    - Full visibility of the grid (global vision)
+    - Camera system centered on agent showing viewport of grid
+    - Agent has GLOBAL vision (sees entire 32×32 grid, not just viewport)
+    - Viewport shows 16×16 tiles around agent for comfortable display
     - Simple sprites for agent, door, and enemies
     - UI showing stats and information
 
@@ -38,13 +40,13 @@ class PyGameRenderer:
     COLOR_UI_BG = (30, 30, 40)
     COLOR_VISION = (100, 200, 255, 60)   # Semi-transparent blue for vision overlay
 
-    def __init__(self, grid_size: int = 16, cell_size: int = 48, fps: int = 10):
+    def __init__(self, grid_size: int = 32, cell_size: int = 32, fps: int = 10):
         """
-        Initialize the PyGame renderer.
+        Initialize the PyGame renderer with camera system.
 
         Args:
-            grid_size: Size of the game grid (default: 16)
-            cell_size: Size of each cell in pixels (default: 48 for full 16×16 view)
+            grid_size: Size of the full game grid (default: 32)
+            cell_size: Size of each cell in pixels (default: 32 for comfortable view)
             fps: Target frames per second (default: 10)
         """
         pygame.init()
@@ -53,9 +55,13 @@ class PyGameRenderer:
         self.cell_size = cell_size
         self.fps = fps
 
-        # Show full grid (no camera system)
-        self.game_width = grid_size * cell_size
-        self.game_height = grid_size * cell_size
+        # Camera viewport size (show 16×16 tiles centered on agent)
+        self.viewport_tiles_width = 16
+        self.viewport_tiles_height = 16
+
+        # Calculate window size based on viewport
+        self.game_width = self.viewport_tiles_width * cell_size
+        self.game_height = self.viewport_tiles_height * cell_size
 
         # UI dimensions
         self.ui_height = 100
@@ -64,17 +70,21 @@ class PyGameRenderer:
         self.window_width = self.game_width
         self.window_height = self.game_height + self.ui_height
 
-        # Create window
+        # Create window (512×612 for 16×16 viewport with 32px cells)
         self.screen = pygame.display.set_mode((self.window_width, self.window_height))
-        pygame.display.set_caption("Dungeon Crawler RL - 16×16 (Global Vision)")
+        pygame.display.set_caption("Dungeon Crawler RL - 32×32 (Global Vision, Camera View)")
+
+        # Camera position (top-left of viewport in grid coordinates)
+        self.camera_x = 0
+        self.camera_y = 0
 
         # Clock for FPS
         self.clock = pygame.time.Clock()
 
-        # Fonts (larger for bigger window)
-        self.font_large = pygame.font.Font(None, 42)
-        self.font_medium = pygame.font.Font(None, 34)
-        self.font_small = pygame.font.Font(None, 26)
+        # Fonts
+        self.font_large = pygame.font.Font(None, 36)
+        self.font_medium = pygame.font.Font(None, 28)
+        self.font_small = pygame.font.Font(None, 22)
 
         # Generate sprites
         self.sprites = self._generate_sprites()
@@ -88,76 +98,74 @@ class PyGameRenderer:
         """
         sprites = {}
 
-        # Agent sprite (blue circle with eyes and smile)
+        # Agent sprite (blue circle with simple eyes and smile)
         agent_surf = pygame.Surface((self.cell_size, self.cell_size), pygame.SRCALPHA)
         center = self.cell_size // 2
+        radius = center - 3
 
         # Main body with shadow
-        pygame.draw.circle(agent_surf, (30, 100, 200), (center + 2, center + 2), center - 4)  # Shadow
-        pygame.draw.circle(agent_surf, self.COLOR_AGENT, (center, center), center - 4)  # Main body
+        pygame.draw.circle(agent_surf, (30, 100, 200), (center + 1, center + 1), radius)  # Shadow
+        pygame.draw.circle(agent_surf, self.COLOR_AGENT, (center, center), radius)  # Main body
 
         # White outline
-        pygame.draw.circle(agent_surf, (255, 255, 255), (center, center), center - 4, 4)
+        pygame.draw.circle(agent_surf, (255, 255, 255), (center, center), radius, 2)
 
-        # Eyes (larger and more expressive)
-        eye_size = 10
-        eye_spacing = self.cell_size // 5
-        eye_y = center - self.cell_size // 6
+        # Eyes (smaller and proportional to 32px cell)
+        eye_size = 3  # Much smaller
+        eye_spacing = self.cell_size // 6
+        eye_y = center - self.cell_size // 8
 
-        # White of eyes
-        pygame.draw.circle(agent_surf, (255, 255, 255), (center - eye_spacing, eye_y), eye_size)
-        pygame.draw.circle(agent_surf, (255, 255, 255), (center + eye_spacing, eye_y), eye_size)
+        # Simple black dots for eyes
+        pygame.draw.circle(agent_surf, (0, 0, 0), (center - eye_spacing, eye_y), eye_size)
+        pygame.draw.circle(agent_surf, (0, 0, 0), (center + eye_spacing, eye_y), eye_size)
 
-        # Pupils
-        pygame.draw.circle(agent_surf, (0, 0, 0), (center - eye_spacing, eye_y), eye_size - 4)
-        pygame.draw.circle(agent_surf, (0, 0, 0), (center + eye_spacing, eye_y), eye_size - 4)
+        # Small white highlights
+        pygame.draw.circle(agent_surf, (255, 255, 255), (center - eye_spacing + 1, eye_y - 1), 1)
+        pygame.draw.circle(agent_surf, (255, 255, 255), (center + eye_spacing + 1, eye_y - 1), 1)
 
-        # Highlight in eyes
-        pygame.draw.circle(agent_surf, (255, 255, 255), (center - eye_spacing + 2, eye_y - 2), 3)
-        pygame.draw.circle(agent_surf, (255, 255, 255), (center + eye_spacing + 2, eye_y - 2), 3)
-
-        # Smile
-        smile_rect = pygame.Rect(center - 12, center + 5, 24, 15)
-        pygame.draw.arc(agent_surf, (255, 255, 255), smile_rect, 3.14, 2 * 3.14, 4)
+        # Small smile (proportional)
+        smile_rect = pygame.Rect(center - 6, center + 2, 12, 8)
+        pygame.draw.arc(agent_surf, (255, 255, 255), smile_rect, 3.14, 2 * 3.14, 2)
 
         sprites['agent'] = agent_surf
 
-        # Enemy sprite (red circle with angry eyes and scowl)
+        # Enemy sprite (red circle with simple angry face)
         enemy_surf = pygame.Surface((self.cell_size, self.cell_size), pygame.SRCALPHA)
         center = self.cell_size // 2
+        radius = center - 3
 
         # Main body with shadow
-        pygame.draw.circle(enemy_surf, (150, 20, 20), (center + 2, center + 2), center - 4)  # Shadow
-        pygame.draw.circle(enemy_surf, self.COLOR_ENEMY, (center, center), center - 4)  # Main body
+        pygame.draw.circle(enemy_surf, (150, 20, 20), (center + 1, center + 1), radius)  # Shadow
+        pygame.draw.circle(enemy_surf, self.COLOR_ENEMY, (center, center), radius)  # Main body
 
         # Dark red outline
-        pygame.draw.circle(enemy_surf, (150, 0, 0), (center, center), center - 4, 5)
+        pygame.draw.circle(enemy_surf, (150, 0, 0), (center, center), radius, 2)
 
-        # Angry eyes
-        eye_size = 10
-        eye_spacing = self.cell_size // 5
-        eye_y = center - self.cell_size // 6
+        # Eyes (smaller and proportional to 32px cell)
+        eye_size = 3  # Much smaller
+        eye_spacing = self.cell_size // 6
+        eye_y = center - self.cell_size // 8
 
-        # Yellow glowing eyes
-        pygame.draw.circle(enemy_surf, (255, 255, 0), (center - eye_spacing, eye_y), eye_size)
-        pygame.draw.circle(enemy_surf, (255, 255, 0), (center + eye_spacing, eye_y), eye_size)
+        # Simple yellow dots for angry eyes
+        pygame.draw.circle(enemy_surf, (255, 200, 0), (center - eye_spacing, eye_y), eye_size)
+        pygame.draw.circle(enemy_surf, (255, 200, 0), (center + eye_spacing, eye_y), eye_size)
 
-        # Dark pupils
-        pygame.draw.circle(enemy_surf, (50, 0, 0), (center - eye_spacing, eye_y), eye_size - 4)
-        pygame.draw.circle(enemy_surf, (50, 0, 0), (center + eye_spacing, eye_y), eye_size - 4)
+        # Dark pupils (very small)
+        pygame.draw.circle(enemy_surf, (100, 0, 0), (center - eye_spacing, eye_y), 1)
+        pygame.draw.circle(enemy_surf, (100, 0, 0), (center + eye_spacing, eye_y), 1)
 
-        # Angry eyebrows (angled down towards center)
-        brow_y = eye_y - 8
+        # Small angry eyebrows (proportional)
+        brow_y = eye_y - 3
         pygame.draw.line(enemy_surf, (100, 0, 0),
-                        (center - eye_spacing - 8, brow_y + 3),
-                        (center - eye_spacing + 8, brow_y), 4)
+                        (center - eye_spacing - 3, brow_y + 1),
+                        (center - eye_spacing + 3, brow_y), 2)
         pygame.draw.line(enemy_surf, (100, 0, 0),
-                        (center + eye_spacing - 8, brow_y),
-                        (center + eye_spacing + 8, brow_y + 3), 4)
+                        (center + eye_spacing - 3, brow_y),
+                        (center + eye_spacing + 3, brow_y + 1), 2)
 
-        # Angry frown
-        frown_rect = pygame.Rect(center - 12, center + 8, 24, 12)
-        pygame.draw.arc(enemy_surf, (100, 0, 0), frown_rect, 0, 3.14, 4)
+        # Small frown (proportional)
+        frown_rect = pygame.Rect(center - 5, center + 3, 10, 6)
+        pygame.draw.arc(enemy_surf, (100, 0, 0), frown_rect, 0, 3.14, 2)
 
         sprites['enemy'] = enemy_surf
 
@@ -334,9 +342,28 @@ class PyGameRenderer:
         pygame.display.flip()
         self.clock.tick(self.fps)
 
+    def _update_camera(self, agent_pos: Tuple[int, int]):
+        """
+        Update camera position to center on agent.
+
+        Args:
+            agent_pos: (y, x) position of agent
+        """
+        agent_y, agent_x = agent_pos
+
+        # Center camera on agent
+        self.camera_x = agent_x - self.viewport_tiles_width // 2
+        self.camera_y = agent_y - self.viewport_tiles_height // 2
+
+        # Clamp camera to grid bounds
+        self.camera_x = max(0, min(self.camera_x, self.grid_size - self.viewport_tiles_width))
+        self.camera_y = max(0, min(self.camera_y, self.grid_size - self.viewport_tiles_height))
+
     def _render_game_view(self, env_state: Dict[str, Any]):
         """
-        Render the full game grid (no camera - shows entire 16×16 grid).
+        Render the game grid with camera viewport centered on agent.
+        Note: Agent has GLOBAL vision (sees entire 32×32 grid),
+        but we only RENDER a 16×16 viewport for display.
 
         Args:
             env_state: Current environment state
@@ -346,46 +373,82 @@ class PyGameRenderer:
         if grid is None or agent_pos is None:
             return
 
-        # Render all tiles (full 16×16 grid)
-        for y in range(self.grid_size):
-            for x in range(self.grid_size):
-                screen_x = x * self.cell_size
-                screen_y = y * self.cell_size
+        # Update camera to follow agent
+        self._update_camera(agent_pos)
+
+        # Calculate viewport bounds in grid coordinates
+        viewport_start_x = int(self.camera_x)
+        viewport_start_y = int(self.camera_y)
+        viewport_end_x = min(viewport_start_x + self.viewport_tiles_width, self.grid_size)
+        viewport_end_y = min(viewport_start_y + self.viewport_tiles_height, self.grid_size)
+
+        # Render tiles within viewport
+        for grid_y in range(viewport_start_y, viewport_end_y):
+            for grid_x in range(viewport_start_x, viewport_end_x):
+                # Screen position (relative to viewport)
+                screen_x = (grid_x - viewport_start_x) * self.cell_size
+                screen_y = (grid_y - viewport_start_y) * self.cell_size
 
                 # Render tile (wall or floor)
-                if grid[y, x] == 1:  # Wall
+                if grid[grid_y, grid_x] == 1:  # Wall
                     self.screen.blit(self.sprites['wall'], (screen_x, screen_y))
                 else:  # Floor
                     self.screen.blit(self.sprites['floor'], (screen_x, screen_y))
 
-        # Render door
+        # Render door (if in viewport)
         door_pos = env_state.get('door_pos')
-        if door_pos is not None:
-            self._render_entity(door_pos, 'door')
+        if door_pos is not None and self._is_in_viewport(door_pos):
+            self._render_entity_viewport(door_pos, 'door')
 
-        # Render enemies
+        # Render enemies (if in viewport)
         enemy1_pos = env_state.get('enemy1_pos')
-        if enemy1_pos is not None:
-            self._render_entity(enemy1_pos, 'enemy')
+        if enemy1_pos is not None and self._is_in_viewport(enemy1_pos):
+            self._render_entity_viewport(enemy1_pos, 'enemy')
 
         enemy2_pos = env_state.get('enemy2_pos')
-        if enemy2_pos is not None:
-            self._render_entity(enemy2_pos, 'enemy')
+        if enemy2_pos is not None and self._is_in_viewport(enemy2_pos):
+            self._render_entity_viewport(enemy2_pos, 'enemy')
 
-        # Render agent (always on top)
-        self._render_entity(agent_pos, 'agent')
+        # Render agent (always on top, if in viewport - should always be visible)
+        if self._is_in_viewport(agent_pos):
+            self._render_entity_viewport(agent_pos, 'agent')
 
-    def _render_entity(self, position: Tuple[int, int], sprite_name: str):
+    def _is_in_viewport(self, position: Tuple[int, int]) -> bool:
         """
-        Render an entity at a given position.
+        Check if a position is within the current camera viewport.
+
+        Args:
+            position: (y, x) position in grid coordinates
+
+        Returns:
+            True if position is visible in current viewport
+        """
+        y, x = position
+        viewport_start_x = int(self.camera_x)
+        viewport_start_y = int(self.camera_y)
+        viewport_end_x = viewport_start_x + self.viewport_tiles_width
+        viewport_end_y = viewport_start_y + self.viewport_tiles_height
+
+        return (viewport_start_x <= x < viewport_end_x and
+                viewport_start_y <= y < viewport_end_y)
+
+    def _render_entity_viewport(self, position: Tuple[int, int], sprite_name: str):
+        """
+        Render an entity at a given position relative to viewport.
 
         Args:
             position: (y, x) position in grid coordinates
             sprite_name: Name of sprite to render
         """
         y, x = position
-        screen_x = x * self.cell_size
-        screen_y = y * self.cell_size
+
+        # Convert grid position to screen position (relative to viewport)
+        viewport_start_x = int(self.camera_x)
+        viewport_start_y = int(self.camera_y)
+
+        screen_x = (x - viewport_start_x) * self.cell_size
+        screen_y = (y - viewport_start_y) * self.cell_size
+
         self.screen.blit(self.sprites[sprite_name], (screen_x, screen_y))
 
     def _render_ui(self, env_state: Dict[str, Any], info: Dict[str, Any], last_reward: float):

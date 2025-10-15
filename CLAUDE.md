@@ -7,11 +7,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 This is a **Dungeon Crawler RL Environment** - a custom Gymnasium environment implementing a grid-based dungeon crawler game optimized for tabular RL algorithms. The project is an academic assignment (20% grade weight) for a Reinforcement Learning course.
 
 The environment features:
-- **16×16 grid** with empty layout (border walls only)
-- **Local vision (5×5 window)** centered on agent - partial observability
+- **16×16 grid** with randomly generated interior walls (configurable density)
+- **Global vision** - agent sees entire 16×16 grid
 - **2 mobile enemies** with random movement (instant death on contact)
-- **Simple objective**: Reach the door/exit
-- **State space**: 256 states (agent position only: 16×16)
+- **DEADLY WALLS**: Hitting a wall = instant death (-100 penalty, same as enemies)
+- **Wall generation**: BFS validation ensures door is always reachable
+- **Simple objective**: Reach the door/exit while avoiding walls and enemies
+- **State space**: 38,416 states (agent position × door position)
 - **Three tabular RL algorithm implementations**: Q-Learning, SARSA, Expected SARSA
 
 ## Core Architecture
@@ -37,13 +39,15 @@ State components:
 
 ### Environment Architecture (`environment/`)
 
-**`dungeon_env.py`** (550+ lines): Main Gymnasium environment
+**`dungeon_env.py`** (600+ lines): Main Gymnasium environment
 - Implements full game loop with `reset()`, `step()`, `render()`
-- 16×16 empty grid (border walls only)
+- 16×16 grid with randomly placed interior walls (configurable density)
+- Wall generation with BFS pathfinding validation (guarantees door accessibility)
 - 2 mobile enemies with random movement (instant death on contact)
-- Local vision: returns 5×5 window centered on agent
-- Episode termination: win (reach door), lose (enemy collision), timeout (300 steps)
-- Reward shaping: distance-based rewards + death penalty
+- Global vision: agent sees entire 16×16 grid
+- **DEADLY WALLS**: Wall collision = instant death (-100 penalty, episode terminated)
+- Episode termination: win (reach door), lose (enemy collision, wall collision), timeout (300 steps)
+- Reward shaping: distance-based rewards + death penalties
 
 **`render_pygame.py`** (480+ lines): PyGame visual renderer with camera system
 - Camera system centered on agent (shows 12×12 tile viewport)
@@ -227,26 +231,36 @@ Enemy collision = instant death with -100 reward penalty. This adds danger and f
 
 ### 4. Reward Shaping Strategy
 
-The environment uses **simple distance-based reward shaping** to guide learning:
+The environment uses **distance-based reward shaping with wall penalties** to guide learning:
 
 | Event | Reward | Purpose |
 |-------|--------|---------|
 | Move closer to door | +1.0 | Encourage progress toward goal |
 | Move away from door | -1.0 | Discourage wrong direction |
 | Step penalty | -0.1 | Encourage efficiency (always applied) |
-| Reach door (WIN) | +100.0 | Ultimate goal |
-| Enemy collision (DEATH) | -100.0 | Strong death penalty |
+| **Reach door (WIN)** | **+200.0** | **Ultimate goal (doubled reward)** 🎯 |
+| **Wall collision** | **-5.0** | **Discourage hitting walls (continues playing)** |
+| Enemy collision (DEATH) | -100.0 | Instant death - agent must learn to avoid enemies ⚠️ |
 
 Net reward per step:
 - **Moving closer**: +1.0 - 0.1 = **+0.9** (positive reinforcement)
 - **Moving away**: -1.0 - 0.1 = **-1.1** (negative reinforcement)
-- **Hit wall** (no movement): **-0.1** (just step penalty)
+- **Wall collision**: -5.0 - 0.1 = **-5.1** (penalty, continues playing)
+- **Enemy collision**: -100.0 - 0.1 = **-100.1** (INSTANT DEATH, episode terminated) ⚠️
+- **Victory**: +200.0 + movement_reward - 0.1 ≈ **+199.9 to +200.9** 🎯
 
-This simple reward structure encourages the agent to:
+**DESIGN RATIONALE**:
+- **Wall collisions**: Penalized (-5.0) but NOT fatal. Agent can learn from mistakes without episode termination.
+- **Victory reward doubled** (+200.0): Makes reaching the goal more attractive, improving learning signal.
+- **Enemy collisions**: Remain fatal (-100.0) to maintain danger and strategic depth.
+
+This reward structure encourages the agent to:
 1. Navigate toward the door (positive reward for getting closer)
 2. Avoid moving in wrong directions (negative reward for getting farther)
-3. Avoid enemies (instant death with -100 penalty)
-4. Complete episodes quickly (step penalty accumulates)
+3. **Avoid walls** (moderate penalty, can recover from mistakes)
+4. Avoid enemies (instant death with -100 penalty)
+5. Prioritize reaching the goal (doubled victory reward)
+6. Complete episodes quickly (step penalty accumulates)
 
 ## Expected Training Performance
 

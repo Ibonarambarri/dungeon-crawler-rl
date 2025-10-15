@@ -110,13 +110,13 @@ def parse_args():
         '--max-steps',
         type=int,
         default=300,
-        help='Maximum steps per episode (default: 300 for 16×16 grid)'
+        help='Maximum steps per episode (default: 300 for 32×32 grid)'
     )
     parser.add_argument(
         '--grid-size',
         type=int,
-        default=16,
-        help='Grid size (default: 16 with local vision 5×5)'
+        default=32,
+        help='Grid size (default: 32 with global vision)'
     )
 
     # Logging and checkpointing
@@ -283,7 +283,7 @@ def train(args):
     print("=" * 70)
     print()
 
-    # Create environment and encoder (16×16 with global vision)
+    # Create environment and encoder (32×32 with global vision)
     env = DungeonCrawlerEnv(
         max_steps=args.max_steps,
         grid_size=args.grid_size

@@ -59,14 +59,14 @@ def parse_args():
     parser.add_argument(
         '--max-steps',
         type=int,
-        default=100,
-        help='Maximum steps per episode (default: 100, ultra-simplified for 8×8)'
+        default=300,
+        help='Maximum steps per episode (default: 300 for 32×32)'
     )
     parser.add_argument(
         '--grid-size',
         type=int,
-        default=8,
-        help='Grid size (default: 8, ultra-simplified with global vision)'
+        default=32,
+        help='Grid size (default: 32 with global vision)'
     )
     parser.add_argument(
         '--seed',
@@ -124,7 +124,8 @@ def evaluate_episode(env, agent, encoder, render: bool = False, verbose: bool = 
         dict: Episode statistics
     """
     obs, info = env.reset()
-    state = encoder.encode(obs)
+    door_pos = info['door_pos']  # Get door position for entire episode
+    state = encoder.encode(obs, door_pos=door_pos)
 
     episode_reward = 0
     episode_length = 0
@@ -140,7 +141,7 @@ def evaluate_episode(env, agent, encoder, render: bool = False, verbose: bool = 
 
         # Take step
         obs, reward, terminated, truncated, info = env.step(action)
-        next_state = encoder.encode(obs)
+        next_state = encoder.encode(obs, door_pos=door_pos)
         done = terminated or truncated
 
         if render:
