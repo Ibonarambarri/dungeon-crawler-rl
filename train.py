@@ -5,18 +5,19 @@ This script trains tabular RL agents (Q-Learning, SARSA, Expected SARSA)
 on the Dungeon Crawler environment with TensorBoard logging.
 
 Usage:
-    # Train from scratch on 8×8 grid (fast learning)
-    python train.py --algorithm qlearning --episodes 2000 --grid-size 8 --max-steps 100 --run-name ql_8x8
+    # Train on 16×16 grid with local vision 5×5
+    python train.py --algorithm qlearning --episodes 5000 --run-name ql_16x16_local
 
-    # Transfer learning: continue training on 16×16 grid (curriculum learning)
-    python train.py --algorithm qlearning --episodes 3000 --grid-size 16 --max-steps 200 \
-        --load-model models/ql_8x8/final_model.pkl --run-name ql_8x8_to_16x16
+    # Train with custom hyperparameters
+    python train.py --algorithm sarsa --episodes 5000 --alpha 0.2 --gamma 0.99 \
+        --epsilon-decay 0.997 --run-name sarsa_custom
 
-    # Train from scratch on 16×16 grid
-    python train.py --algorithm qlearning --episodes 5000 --run-name ql_16x16
+    # Train Expected SARSA
+    python train.py --algorithm expected_sarsa --episodes 5000 --run-name expected_sarsa
 
-    # Custom hyperparameters
-    python train.py --algorithm sarsa --alpha 0.2 --gamma 0.99 --epsilon-decay 0.997
+    # Continue training from checkpoint (curriculum learning)
+    python train.py --algorithm qlearning --episodes 3000 \
+        --load-model models/ql_16x16_local/checkpoint_ep2000.pkl --run-name ql_continued
 
 Features:
 - Command-line argument parsing for hyperparameters
@@ -104,18 +105,18 @@ def parse_args():
         help='Minimum epsilon (default: 0.01)'
     )
 
-    # Environment parameters (ULTRA-SIMPLIFIED)
+    # Environment parameters
     parser.add_argument(
         '--max-steps',
         type=int,
-        default=100,
-        help='Maximum steps per episode (default: 100, ultra-simplified for 8×8)'
+        default=300,
+        help='Maximum steps per episode (default: 300 for 16×16 grid)'
     )
     parser.add_argument(
         '--grid-size',
         type=int,
-        default=8,
-        help='Grid size (default: 8, ultra-simplified with global vision)'
+        default=16,
+        help='Grid size (default: 16 with local vision 5×5)'
     )
 
     # Logging and checkpointing
@@ -205,7 +206,8 @@ def train_episode(env, agent, encoder, algorithm: str) -> tuple:
         tuple: (episode_reward, episode_length, success)
     """
     obs, info = env.reset()
-    state = encoder.encode(obs)
+    door_pos = info['door_pos']  # Get door position for entire episode
+    state = encoder.encode(obs, door_pos=door_pos)
 
     episode_reward = 0
     episode_length = 0
@@ -223,7 +225,7 @@ def train_episode(env, agent, encoder, algorithm: str) -> tuple:
 
         # Take step
         obs, reward, terminated, truncated, info = env.step(action)
-        next_state = encoder.encode(obs)
+        next_state = encoder.encode(obs, door_pos=door_pos)
         done = terminated or truncated
 
         # Select next action (for SARSA and update)
@@ -281,7 +283,7 @@ def train(args):
     print("=" * 70)
     print()
 
-    # Create environment and encoder (SIMPLIFIED - no max_enemies)
+    # Create environment and encoder (16×16 with global vision)
     env = DungeonCrawlerEnv(
         max_steps=args.max_steps,
         grid_size=args.grid_size

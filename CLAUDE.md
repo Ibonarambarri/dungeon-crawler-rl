@@ -7,51 +7,51 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 This is a **Dungeon Crawler RL Environment** - a custom Gymnasium environment implementing a grid-based dungeon crawler game optimized for tabular RL algorithms. The project is an academic assignment (20% grade weight) for a Reinforcement Learning course.
 
 The environment features:
-- 32×32 procedurally generated dungeons with BSP algorithm
-- 8×8 logical grid for state encoding (downscaled from visual grid by factor of 4)
-- 4 enemies with random movement (not deterministic patrols)
-- Combat system with sword/key items, boss fight, and escape objective
-- State space: 10,240 theoretical states (64 pos × 4 health × 5 enemy_count × 2 × 2 × 2)
-- Three tabular RL algorithm implementations: Q-Learning, SARSA, Expected SARSA
+- **16×16 grid** with empty layout (border walls only)
+- **Local vision (5×5 window)** centered on agent - partial observability
+- **2 mobile enemies** with random movement (instant death on contact)
+- **Simple objective**: Reach the door/exit
+- **State space**: 256 states (agent position only: 16×16)
+- **Three tabular RL algorithm implementations**: Q-Learning, SARSA, Expected SARSA
 
 ## Core Architecture
 
 ### State Space Design (Critical Implementation Detail)
 
-**Visual vs. Logical Grid Split**: The environment uses a dual-grid system to balance visual richness with tractable state spaces:
-- **Visual grid**: 32×32 (for pygame rendering)
-- **Logical grid**: 8×8 (for RL state encoding)
-- **Downscaling**: Agent positions are divided by 4 when encoding states
+**Simple Position-Based Encoding**: The environment uses the agent's absolute position as the primary state feature:
+- **Grid**: 16×16 (single unified grid)
+- **Local vision**: 5×5 window centered on agent (partial observability)
+- **State encoding**: Agent position only (256 states = 16×16)
 
 This design is implemented across two key files:
-- `environment/dungeon_env.py` - operates on 32×32 visual grid
-- `utils/state_encoder.py` - downscales to 8×8 logical grid via `downscale_factor`
+- `environment/dungeon_env.py` - operates on 16×16 grid, provides local 5×5 view
+- `utils/state_encoder.py` - encodes agent position as single integer
 
-State components encoded as single integer via mixed-radix number system:
-- Agent position: 64 positions (8×8)
-- Agent health: 4 levels (0-3 HP)
-- Enemy count: 5 states (0-4 enemies alive, NOT individual positions)
-- Items: has_sword, has_key (binary)
-- Boss: boss_alive (binary)
+State components:
+- **Agent position**: 256 positions (16×16) - THE ONLY STATE FEATURE
+- Door position: varies per episode, not included in state
+- Enemy positions: 2 enemies with random movement, not included in state
+- Agent has local vision only (sees 5×5 window)
 
-**Note**: We track only the COUNT of enemies alive, not their individual positions. This reduces state space from 694 million to 10,240 states, making tabular RL tractable.
+**Key Design Choice**: We encode only agent position, ignoring the local view content and enemy positions. This keeps the state space very tractable (256 states) for tabular RL, while the partial observability (5×5 local vision) adds challenge to the navigation task.
 
 ### Environment Architecture (`environment/`)
 
-**`dungeon_env.py`** (700+ lines): Main Gymnasium environment
+**`dungeon_env.py`** (550+ lines): Main Gymnasium environment
 - Implements full game loop with `reset()`, `step()`, `render()`
-- Handles movement, combat, item pickup, enemy AI
-- Episode termination: win (boss dead + reach exit), lose (HP=0), timeout (800 steps)
-- Reward shaping: 10+ event types with dense intermediate rewards
+- 16×16 empty grid (border walls only)
+- 2 mobile enemies with random movement (instant death on contact)
+- Local vision: returns 5×5 window centered on agent
+- Episode termination: win (reach door), lose (enemy collision), timeout (300 steps)
+- Reward shaping: distance-based rewards + death penalty
 
-**`dungeon_generator.py`** (300+ lines): Procedural dungeon generation
-- BSP (Binary Space Partitioning) algorithm creates 6 rooms connected by corridors
-- Places agent, items (sword/key), enemies (with random starting positions), boss, exit
-- Generates unique dungeon layout every episode
-
-**`render_pygame.py`** (500+ lines): PyGame visual renderer
-- Camera system centered on agent
-- 24×24 pixel cells with health bars, minimap, UI overlay
+**`render_pygame.py`** (480+ lines): PyGame visual renderer with camera system
+- Camera system centered on agent (shows 12×12 tile viewport)
+- 32×32 pixel cells for 16×16 grid
+- Local vision overlay: semi-transparent blue highlight over 5×5 visible area
+- Enemy sprites: red circles with angry eyes
+- Agent sprite: blue circle with friendly eyes
+- UI showing position, distance to door, steps, reward
 - Only used when `render_mode='pygame'`
 
 ### Agent Implementations (`agents/`)
@@ -79,19 +79,18 @@ BaseTabularAgent (base_agent.py)
 
 ### State Encoding (`utils/state_encoder.py`)
 
-**Mixed-radix positional encoding**: Each state component has a "place value" based on cardinality of subsequent components. This ensures bijective (1-to-1) mapping.
+**Simple position encoding**: Agent's absolute position (y, x) in the 16×16 grid is converted to a single integer.
 
 Example calculation:
 ```python
-state = (pos_idx * pos_mult +
-         health * health_mult +
-         enemies_alive * enemies_alive_mult +
-         has_sword * sword_mult +
-         has_key * key_mult +
-         boss_alive * boss_mult)
+state = agent_y * 16 + agent_x  # Values from 0 to 255
 ```
 
-The encoder automatically handles downscaling from 32×32 to 8×8 (divide by 4).
+The encoder receives:
+- `local_view`: 5×5 numpy array (currently ignored for state encoding)
+- `agent_pos`: absolute (y, x) position in 16×16 grid
+
+Output: single integer state (0-255)
 
 ## Common Development Commands
 
@@ -210,13 +209,13 @@ while not done:
 Q-tables use `defaultdict(lambda: np.zeros(n_actions))` to only store visited states. This is critical for handling the state space efficiently.
 
 Typical memory usage:
-- Theoretical states: 10,240
-- Visited states during 5000 episodes: ~3,000-8,000
-- Memory: ~1-2 MB per trained agent
+- Theoretical states: 256
+- Visited states during 5000 episodes: ~200-256 (most states get visited)
+- Memory: < 1 MB per trained agent
 
 ### 3. Enemy Movement System
 
-Enemies use random movement (not deterministic patrols). Each step, they randomly choose to move UP/DOWN/LEFT/RIGHT or STAY.
+The 2 enemies use random movement (not deterministic patrols). Each step, each enemy randomly chooses to move UP/DOWN/LEFT/RIGHT or STAY.
 
 Movement logic from `dungeon_env.py`:
 ```python
@@ -224,99 +223,71 @@ Movement logic from `dungeon_env.py`:
 move_action = np.random.randint(0, 5)
 ```
 
-This random movement, combined with only tracking enemy COUNT (not positions), keeps the state space tractable while still providing challenge and variability.
+Enemy collision = instant death with -100 reward penalty. This adds danger and forces the agent to learn cautious navigation.
 
 ### 4. Reward Shaping Strategy
 
-The environment uses dense reward shaping to guide learning:
+The environment uses **simple distance-based reward shaping** to guide learning:
 
 | Event | Reward | Purpose |
 |-------|--------|---------|
-| Valid move | +1.0 | Encourage exploration |
-| Step penalty | -0.1 | Encourage efficiency |
-| Proximity to objective | ±2.0 per tile | Guide toward current goal |
-| Item pickup | +10.0 | Guide to sword/key |
-| Kill enemy | +50.0 | Reward combat |
-| Kill boss | +100.0 | Major milestone |
-| Win (exit) | +500.0 | Ultimate goal |
-| Wall hit | -5.0 to -8.0 | Discourage invalid moves |
-| Take damage | -10.0 | Avoid enemies |
-| Death | -50.0 | Strong penalty |
-| **Loop Detection Penalties** | | **Anti-repetition system** |
-| Action spam (6+ same) | -15.0 to -20.0 | Prevent single action loops |
-| Oscillation (UP-DOWN) | -12.0 | Prevent back-and-forth |
-| Position loops (2-3 tiles) | -5.0 to -8.0 | Prevent getting stuck |
-| Movement cycles | -10.0 | Prevent circular patterns |
+| Move closer to door | +1.0 | Encourage progress toward goal |
+| Move away from door | -1.0 | Discourage wrong direction |
+| Step penalty | -0.1 | Encourage efficiency (always applied) |
+| Reach door (WIN) | +100.0 | Ultimate goal |
+| Enemy collision (DEATH) | -100.0 | Strong death penalty |
 
-Net reward per valid step: +0.9 (move +1.0 - step penalty -0.1), plus proximity-based shaping.
+Net reward per step:
+- **Moving closer**: +1.0 - 0.1 = **+0.9** (positive reinforcement)
+- **Moving away**: -1.0 - 0.1 = **-1.1** (negative reinforcement)
+- **Hit wall** (no movement): **-0.1** (just step penalty)
 
-**Loop Detection System v2 - Multi-Layer Architecture**: The environment uses a sophisticated 5-layer detection system to identify and penalize repetitive behaviors:
-
-**Layer 1: Pattern Repetition Detection**
-- Detects repeating action sequences of length 2-5
-- Immediate detection after just 2 repetitions (vs 8 steps in v1)
-- Penalties: -18 (2-len), -14 (3-len), -10 (4-len), -8 (5-len)
-
-**Layer 2: Action Diversity Analysis**
-- Measures variety in last 8 actions
-- Only penalizes very low diversity (1-2 unique actions)
-- Penalties: -16 (1 action), -10 (2 actions)
-
-**Layer 3: Spatial Loop Detection**
-- Tracks position revisitation in last 6 steps
-- Only triggers on severe stuck cases (4+ visits to same position)
-- Penalty: -10 (very stuck)
-
-**Layer 4: Action Spam Detection**
-- Detects same action 6+ consecutive times
-- Extra penalty for ATTACK spam
-- Penalties: -14 (general), -20 (ATTACK spam)
-
-**Layer 5: Pure Oscillation Detection**
-- Perfect alternation between opposite directions (UP-DOWN, LEFT-RIGHT)
-- Must be 6+ consecutive perfect pairs
-- Penalty: -12
-
-This system achieves **81% test accuracy**, effectively catching obvious loops while allowing legitimate exploration patterns.
+This simple reward structure encourages the agent to:
+1. Navigate toward the door (positive reward for getting closer)
+2. Avoid moving in wrong directions (negative reward for getting farther)
+3. Avoid enemies (instant death with -100 penalty)
+4. Complete episodes quickly (step penalty accumulates)
 
 ## Expected Training Performance
 
-Typical learning progression for 5000 episodes:
+Typical learning progression for 5000 episodes (16×16 grid with 2 random enemies):
 
 **Q-Learning** (off-policy, fastest):
-- Episodes 0-500: Random exploration, ~0% success
-- Episodes 500-1500: Learns sword value, ~5% success
-- Episodes 1500-3000: Strategic item collection, ~20% success
-- Episodes 3000-5000: Optimized paths, **40-60% success**
+- Episodes 0-1000: Random exploration, learning basic navigation
+- Episodes 1000-3000: Learning to reach door while avoiding enemies
+- Episodes 3000-5000: Refined policy with better enemy avoidance
+- Expected final success: **Variable** (depends heavily on enemy randomness)
 
 **SARSA** (on-policy, conservative):
-- Slower initial learning, more stable final policy
-- Better at avoiding risky states
-- Expected final success: **30-50%**
+- More cautious policy development
+- Better at avoiding risky paths near enemies
+- Expected final success: **May be lower due to conservative exploration**
 
 **Expected SARSA** (hybrid approach):
-- Learning speed similar to Q-Learning
-- Lower variance than SARSA
-- Expected final success: **35-55%**
+- Balance between Q-Learning's speed and SARSA's safety
+- Expected final success: **Variable** (somewhere between the two)
+
+**Key Challenge**: With 2 randomly moving enemies and only local vision (5×5), success rates will be lower than a simple navigation task. The agent must learn:
+1. Navigate 16×16 grid to reach door
+2. Avoid randomly moving enemies (partial observability makes this harder)
+3. Balance exploration vs exploitation
 
 ## File Organization
 
 ```
 /
 ├── environment/          # Gymnasium environment implementation
-│   ├── dungeon_env.py         # Main environment (32×32 visual grid)
-│   ├── dungeon_generator.py   # BSP procedural generation
-│   └── render_pygame.py       # PyGame renderer
+│   ├── dungeon_env.py         # Main environment (16×16 grid, local 5×5 vision)
+│   └── render_pygame.py       # PyGame renderer with camera system
 ├── agents/              # RL algorithm implementations
 │   ├── base_agent.py         # Base class with Q-table, epsilon-greedy
 │   ├── qlearning.py          # Q-Learning update rule
 │   ├── sarsa.py              # SARSA update rule
 │   └── expected_sarsa.py     # Expected SARSA update rule
 ├── utils/               # Utilities
-│   └── state_encoder.py      # Dict obs → integer state (8×8 logical)
+│   └── state_encoder.py      # Dict obs → integer state (agent position)
 ├── train.py             # Training script with TensorBoard logging
 ├── evaluate.py          # Evaluation script with statistics
-├── demo.py              # Text-based demo with step commentary
 ├── demo_pygame.py       # Interactive PyGame demo (manual/AI modes)
 ├── logs/                # TensorBoard logs (created during training)
 ├── models/              # Saved Q-tables (created during training)
@@ -326,17 +297,22 @@ Typical learning progression for 5000 episodes:
 ## Important Constraints
 
 1. **Grid size consistency**: If changing `grid_size` in `dungeon_env.py`, also update `state_encoder.py` to match
-2. **Enemy count**: `max_enemies` must be consistent between `dungeon_env.py` and `state_encoder.py`
-3. **State encoding**: Changes to observation space require updating both encoder multipliers and state space size calculation
+2. **Local view size**: Currently fixed at 5×5 in both `dungeon_env.py` and `state_encoder.py`
+3. **State encoding**: Current encoding uses only agent position (256 states). To include local view features, would need to redesign encoder
 4. **SARSA training**: Must follow the special action selection pattern (see training loop above)
 5. **Pickle compatibility**: Q-table saving converts `defaultdict` to regular dict; loading recreates `defaultdict`
+6. **Enemy mechanics**: 2 enemies with random movement, instant death on contact
 
 ## Academic Context
 
 This project fulfills **Option B: Environment Design** requirements:
-- Custom Gymnasium environment with well-designed state space (10,240 states)
+- Custom Gymnasium environment with well-designed state space (256 states)
 - Tabular RL algorithm implementations (Q-Learning, SARSA, Expected SARSA)
 - Comprehensive documentation and analysis
-- Complexity justification: tractable yet challenging state space, procedural generation, random enemy movement, multi-objective sequential rewards, strategic planning required
+- Complexity justification: tractable state space (256 states) with added challenge from:
+  - Partial observability (5×5 local vision)
+  - 2 randomly moving enemies (stochastic environment)
+  - Death penalty encouraging careful exploration
+  - Distance-based reward shaping
 
 Grade weight: 20% (16% complexity + 4% documentation)

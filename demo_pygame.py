@@ -95,6 +95,9 @@ class DungeonDemo:
         self.total_reward = 0.0
         self.episode_rewards = []
 
+        # Current episode state
+        self.current_door_pos = None  # Store door position for encoding
+
         # FPS control
         self.clock = pygame.time.Clock()
 
@@ -170,8 +173,8 @@ class DungeonDemo:
             # Random action as fallback
             return self.env.action_space.sample()
 
-        # Encode observation to state
-        state = self.encoder.encode(observation)
+        # Encode observation to state (use stored door_pos)
+        state = self.encoder.encode(observation, door_pos=self.current_door_pos)
 
         # Get best action from agent (greedy, no exploration)
         action = self.agent.get_action(state, training=False)
@@ -253,6 +256,9 @@ class DungeonDemo:
         obs, info = self.env.reset()
         self.episode_count += 1
         self.total_reward = 0.0
+
+        # Store door position for entire episode (needed for state encoding)
+        self.current_door_pos = info['door_pos']
 
         print(f"\n=== Episode {self.episode_count} Started ===")
         print(f"Agent at: {info['agent_pos']}")  # Position is in info, not obs

@@ -1,11 +1,11 @@
 """
-Dungeon Crawler RL Environment - 16×16 with Global Vision
+Dungeon Crawler RL Environment - 16×16 with Local Vision (5×5)
 
-A custom Gymnasium environment for navigation with full observability.
+A custom Gymnasium environment for navigation with partial observability.
 
 Features:
 - 16×16 grid with border walls
-- Agent with GLOBAL vision (sees entire 16×16 grid)
+- Agent with LOCAL vision (sees only 5×5 window centered on itself)
 - 2 mobile enemies with random movement (instant death on contact)
 - Door/exit objective
 - Reward structure (SHAPED + SPARSE):
@@ -16,9 +16,9 @@ Features:
   * Step penalty: -0.1 (always applied)
 
 State Space:
-- Global view: Full 16×16 grid
+- Local view: 5×5 window centered on agent
 - Agent position encoding (for state encoding)
-- Full observability makes learning easier
+- Partial observability makes problem harder
 
 Action Space (4 movements):
 - 0: Move UP
@@ -70,21 +70,25 @@ class DungeonCrawlerEnv(gym.Env):
         self,
         render_mode: Optional[str] = None,
         max_steps: int = 300,
-        grid_size: int = 16
+        grid_size: int = 16,
+        local_view_size: int = 5
     ):
         """
-        Initialize the environment with global vision.
+        Initialize the environment with local vision.
 
         Args:
             render_mode: Rendering mode ('human', 'ansi', 'pygame', or None)
             max_steps: Maximum steps per episode (default: 300)
             grid_size: Size of the square grid (default: 16)
+            local_view_size: Size of local vision window (default: 5, must be odd)
         """
         super().__init__()
 
         self.grid_size = grid_size
         self.max_steps = max_steps
         self.render_mode = render_mode
+        self.local_view_size = local_view_size
+        self.local_view_radius = local_view_size // 2  # For 5x5, radius is 2
 
         # PyGame renderer (lazy initialization)
         self.pygame_renderer = None
@@ -93,7 +97,8 @@ class DungeonCrawlerEnv(gym.Env):
                 from environment.render_pygame import PyGameRenderer
                 self.pygame_renderer = PyGameRenderer(
                     grid_size=grid_size,
-                    cell_size=48,  # Larger cells for better visibility (768×848 window)
+                    cell_size=32,  # Smaller cells for 16×16 grid
+                    local_view_size=local_view_size,
                     fps=self.metadata['render_fps']
                 )
             except ImportError:
@@ -103,10 +108,13 @@ class DungeonCrawlerEnv(gym.Env):
         # Define action space (4 movements)
         self.action_space = spaces.Discrete(4)
 
-        # Define observation space (global 16×16 view)
+        # Define observation space (local 5×5 view + agent position for state encoding)
         self.observation_space = spaces.Dict({
-            'global_view': spaces.Box(
-                low=0, high=5, shape=(grid_size, grid_size), dtype=np.int32
+            'local_view': spaces.Box(
+                low=0, high=5, shape=(local_view_size, local_view_size), dtype=np.int32
+            ),
+            'agent_pos': spaces.Box(
+                low=0, high=grid_size-1, shape=(2,), dtype=np.int32
             )
         })
 
@@ -392,11 +400,11 @@ class DungeonCrawlerEnv(gym.Env):
 
     def _get_global_view(self) -> np.ndarray:
         """
-        Get global view of entire 16×16 grid.
+        Get global view of entire 8×8 grid.
 
         Returns:
-            np.ndarray: 16×16 array with cell types:
-                0 = floor, 1 = wall, 2 = door, 3 = agent, 4 = agent on door, 5 = enemy
+            np.ndarray: 8×8 array with cell types:
+                0 = floor, 1 = wall, 2 = door, 3 = agent, 4 = agent on door
         """
         view = np.zeros((self.grid_size, self.grid_size), dtype=np.int32)
         agent_y, agent_x = self.agent_pos
@@ -410,8 +418,6 @@ class DungeonCrawlerEnv(gym.Env):
                 # Check what's at this position
                 if self.grid[y, x] == 1:
                     view[y, x] = self.CELL_WALL
-                elif pos == tuple(self.enemy1_pos) or pos == tuple(self.enemy2_pos):
-                    view[y, x] = self.CELL_ENEMY
                 elif pos == self.door_pos:
                     view[y, x] = self.CELL_DOOR
                 else:
@@ -427,7 +433,7 @@ class DungeonCrawlerEnv(gym.Env):
 
     def _get_obs(self) -> Dict[str, Any]:
         """
-        Get current observation (16×16 global view).
+        Get current observation (8×8 global view only).
 
         Returns:
             observation: Dictionary with global_view
@@ -449,8 +455,7 @@ class DungeonCrawlerEnv(gym.Env):
         return {
             'steps': self.steps,
             'dist_to_door': dist_to_door,
-            'agent_pos': agent_pos_tuple,  # For debugging
-            'door_pos': self.door_pos  # For state encoding
+            'agent_pos': agent_pos_tuple  # For debugging
         }
 
     def render(self) -> Optional[str]:
@@ -470,8 +475,6 @@ class DungeonCrawlerEnv(gym.Env):
                 'grid': self.grid,
                 'agent_pos': tuple(self.agent_pos),
                 'door_pos': self.door_pos,
-                'enemy1_pos': tuple(self.enemy1_pos),
-                'enemy2_pos': tuple(self.enemy2_pos),
                 'last_action': self.last_action,
                 'global_view': self._get_global_view()
             }
@@ -501,21 +504,15 @@ class DungeonCrawlerEnv(gym.Env):
         y, x = self.door_pos
         display_grid[y][x] = 'X'
 
-        # Place enemies
-        y, x = self.enemy1_pos
-        display_grid[y][x] = 'E'
-        y, x = self.enemy2_pos
-        display_grid[y][x] = 'E'
-
         # Place agent (overwrites other symbols)
         y, x = self.agent_pos
         display_grid[y][x] = '@'
 
         # Build output string
         output = []
-        output.append("=" * 70)
-        output.append(f"DUNGEON 16×16 - Step {self.steps}/{self.max_steps}")
-        output.append("=" * 70)
+        output.append("=" * 50)
+        output.append(f"DUNGEON 8×8 - Step {self.steps}/{self.max_steps}")
+        output.append("=" * 50)
 
         # Print grid
         for y in range(self.grid_size):
@@ -524,15 +521,14 @@ class DungeonCrawlerEnv(gym.Env):
                 row.append(display_grid[y][x])
             output.append(' '.join(row))
 
-        output.append("=" * 70)
+        output.append("=" * 50)
 
         # Print stats
         output.append(f"Position: ({self.agent_pos[0]}, {self.agent_pos[1]})")
         output.append(f"Distance to Door: {self._manhattan_dist(tuple(self.agent_pos), self.door_pos)}")
-        output.append(f"Enemies: ({self.enemy1_pos[0]}, {self.enemy1_pos[1]}), ({self.enemy2_pos[0]}, {self.enemy2_pos[1]})")
         output.append(f"Last Reward: {self.last_step_reward:.2f}")
 
-        output.append("=" * 70)
+        output.append("=" * 50)
 
         result = '\n'.join(output)
 
@@ -558,12 +554,12 @@ def test_environment():
     4. Observations are valid
     5. Local view is correct
     """
-    print("Testing DungeonCrawlerEnv (16×16 with Global Vision)...")
+    print("Testing DungeonCrawlerEnv (8×8 ULTRA-SIMPLIFIED)...")
     print()
 
     # Test 1: Create environment
     print("Test 1: Creating environment")
-    env = DungeonCrawlerEnv(render_mode='human', max_steps=300)
+    env = DungeonCrawlerEnv(render_mode='human', max_steps=100)
     print(f"Action space: {env.action_space}")
     print(f"Observation space: {env.observation_space}")
     print("✓ Environment created")
@@ -580,10 +576,10 @@ def test_environment():
     print()
 
     # Test 3: Global view
-    print("Test 3: Checking global view (16×16)")
-    print("Global view (entire grid, showing only agent and door for clarity):")
+    print("Test 3: Checking global view (8×8)")
+    print("Global view (entire grid):")
     global_view = obs['global_view']
-    symbols = {0: '.', 1: '#', 2: 'X', 3: '@', 4: '$', 5: 'E'}  # $ = agent on door, E = enemy
+    symbols = {0: '.', 1: '#', 2: 'X', 3: '@', 4: '$'}  # $ = agent on door
     for y in range(env.grid_size):
         print(' '.join([symbols[global_view[y, x]] for x in range(env.grid_size)]))
     print("✓ Global view correct")
