@@ -56,7 +56,7 @@ class DungeonDemo:
         model_path: Optional[str] = None,
         manual_mode: bool = True,
         fps: int = 10,
-        grid_size: int = 32
+        grid_size: int = 16
     ):
         """
         Initialize the demo.
@@ -426,8 +426,8 @@ Examples:
     parser.add_argument(
         '--grid-size',
         type=int,
-        default=32,
-        help='Grid size (default: 32, with global vision)'
+        default=16,
+        help='Grid size (default: 16, with global vision)'
     )
 
     args = parser.parse_args()

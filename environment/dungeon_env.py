@@ -1,11 +1,11 @@
 """
-Dungeon Crawler RL Environment - 32×32 with Global Vision
+Dungeon Crawler RL Environment - 16×16 with Global Vision
 
 A custom Gymnasium environment for navigation with full observability.
 
 Features:
-- 32×32 grid with randomly placed interior walls (10% density)
-- Agent with GLOBAL vision (sees entire 32×32 grid)
+- 16×16 grid with randomly placed interior walls (10% density)
+- Agent with GLOBAL vision (sees entire 16×16 grid)
 - 2 mobile enemies with random movement (instant death on contact)
 - Door/exit objective
 - Wall generation with guaranteed path to door (BFS validation)
@@ -19,8 +19,8 @@ Reward Structure (SHAPED + SPARSE):
   * Step penalty: -0.1 (always applied)
 
 State Space:
-- Global view: Full 32×32 grid
-- State encoding: Agent position (30×30) × Door position (30×30) = 810,000 states
+- Global view: Full 16×16 grid
+- State encoding: Agent position (14×14) × Door position (14×14) = 38,416 states
 - Full observability makes learning easier
 
 Action Space (4 movements):
@@ -73,7 +73,7 @@ class DungeonCrawlerEnv(gym.Env):
         self,
         render_mode: Optional[str] = None,
         max_steps: int = 300,
-        grid_size: int = 32,
+        grid_size: int = 16,
         wall_density: float = 0.10,
         wall_collision_penalty: float = -1.0
     ):
@@ -83,7 +83,7 @@ class DungeonCrawlerEnv(gym.Env):
         Args:
             render_mode: Rendering mode ('human', 'ansi', 'pygame', or None)
             max_steps: Maximum steps per episode (default: 300)
-            grid_size: Size of the square grid (default: 32)
+            grid_size: Size of the square grid (default: 16)
             wall_density: Probability of wall placement (0.0-1.0, default: 0.10)
             wall_collision_penalty: Penalty for attempting to move into a wall (default: -1.0)
         """
@@ -102,7 +102,7 @@ class DungeonCrawlerEnv(gym.Env):
                 from environment.render_pygame import PyGameRenderer
                 self.pygame_renderer = PyGameRenderer(
                     grid_size=grid_size,
-                    cell_size=32,  # 32px cells for 16×16 viewport (512×612 window)
+                    cell_size=48,  # 48px cells for 16×16 full grid (768×868 window)
                     fps=self.metadata['render_fps']
                 )
             except ImportError:

@@ -1,11 +1,11 @@
 """
-PyGame Renderer for Dungeon Crawler - 32×32 with Global Vision
+PyGame Renderer for Dungeon Crawler - 16×16 with Global Vision
 
-Renders the 32×32 dungeon with camera system centered on agent.
+Renders the entire 16×16 dungeon on screen without camera movement.
 Features:
-- Camera system following the agent (shows viewport of full grid)
-- Agent has GLOBAL vision (sees entire 32×32 grid)
-- Camera viewport shows portion around agent for rendering
+- Shows full 16×16 grid at all times (no camera following)
+- Agent has GLOBAL vision (sees entire 16×16 grid)
+- All tiles visible simultaneously for better gameplay
 - Enemy sprites with distinct appearance
 - Smooth rendering with proper layering
 """
@@ -18,12 +18,12 @@ import sys
 
 class PyGameRenderer:
     """
-    PyGame renderer for 32×32 dungeon with global vision.
+    PyGame renderer for 16×16 dungeon with global vision.
 
     Features:
-    - Camera system centered on agent showing viewport of grid
-    - Agent has GLOBAL vision (sees entire 32×32 grid, not just viewport)
-    - Viewport shows 16×16 tiles around agent for comfortable display
+    - Shows entire 16×16 grid without camera movement
+    - Agent has GLOBAL vision (sees entire 16×16 grid)
+    - All tiles visible at all times for better overview
     - Simple sprites for agent, door, and enemies
     - UI showing stats and information
 
@@ -40,13 +40,13 @@ class PyGameRenderer:
     COLOR_UI_BG = (30, 30, 40)
     COLOR_VISION = (100, 200, 255, 60)   # Semi-transparent blue for vision overlay
 
-    def __init__(self, grid_size: int = 32, cell_size: int = 32, fps: int = 10):
+    def __init__(self, grid_size: int = 16, cell_size: int = 48, fps: int = 10):
         """
-        Initialize the PyGame renderer with camera system.
+        Initialize the PyGame renderer to show full grid.
 
         Args:
-            grid_size: Size of the full game grid (default: 32)
-            cell_size: Size of each cell in pixels (default: 32 for comfortable view)
+            grid_size: Size of the full game grid (default: 16)
+            cell_size: Size of each cell in pixels (default: 48 for comfortable view)
             fps: Target frames per second (default: 10)
         """
         pygame.init()
@@ -55,13 +55,9 @@ class PyGameRenderer:
         self.cell_size = cell_size
         self.fps = fps
 
-        # Camera viewport size (show 16×16 tiles centered on agent)
-        self.viewport_tiles_width = 16
-        self.viewport_tiles_height = 16
-
-        # Calculate window size based on viewport
-        self.game_width = self.viewport_tiles_width * cell_size
-        self.game_height = self.viewport_tiles_height * cell_size
+        # Calculate window size based on full grid (no viewport)
+        self.game_width = grid_size * cell_size
+        self.game_height = grid_size * cell_size
 
         # UI dimensions
         self.ui_height = 100
@@ -70,13 +66,9 @@ class PyGameRenderer:
         self.window_width = self.game_width
         self.window_height = self.game_height + self.ui_height
 
-        # Create window (512×612 for 16×16 viewport with 32px cells)
+        # Create window (768×868 for 16×16 full grid with 48px cells)
         self.screen = pygame.display.set_mode((self.window_width, self.window_height))
-        pygame.display.set_caption("Dungeon Crawler RL - 32×32 (Global Vision, Camera View)")
-
-        # Camera position (top-left of viewport in grid coordinates)
-        self.camera_x = 0
-        self.camera_y = 0
+        pygame.display.set_caption("Dungeon Crawler RL - 16×16 (Full Grid View)")
 
         # Clock for FPS
         self.clock = pygame.time.Clock()
@@ -342,28 +334,10 @@ class PyGameRenderer:
         pygame.display.flip()
         self.clock.tick(self.fps)
 
-    def _update_camera(self, agent_pos: Tuple[int, int]):
-        """
-        Update camera position to center on agent.
-
-        Args:
-            agent_pos: (y, x) position of agent
-        """
-        agent_y, agent_x = agent_pos
-
-        # Center camera on agent
-        self.camera_x = agent_x - self.viewport_tiles_width // 2
-        self.camera_y = agent_y - self.viewport_tiles_height // 2
-
-        # Clamp camera to grid bounds
-        self.camera_x = max(0, min(self.camera_x, self.grid_size - self.viewport_tiles_width))
-        self.camera_y = max(0, min(self.camera_y, self.grid_size - self.viewport_tiles_height))
-
     def _render_game_view(self, env_state: Dict[str, Any]):
         """
-        Render the game grid with camera viewport centered on agent.
-        Note: Agent has GLOBAL vision (sees entire 32×32 grid),
-        but we only RENDER a 16×16 viewport for display.
+        Render the entire game grid (full 16×16).
+        No camera movement - all tiles are always visible.
 
         Args:
             env_state: Current environment state
@@ -373,21 +347,12 @@ class PyGameRenderer:
         if grid is None or agent_pos is None:
             return
 
-        # Update camera to follow agent
-        self._update_camera(agent_pos)
-
-        # Calculate viewport bounds in grid coordinates
-        viewport_start_x = int(self.camera_x)
-        viewport_start_y = int(self.camera_y)
-        viewport_end_x = min(viewport_start_x + self.viewport_tiles_width, self.grid_size)
-        viewport_end_y = min(viewport_start_y + self.viewport_tiles_height, self.grid_size)
-
-        # Render tiles within viewport
-        for grid_y in range(viewport_start_y, viewport_end_y):
-            for grid_x in range(viewport_start_x, viewport_end_x):
-                # Screen position (relative to viewport)
-                screen_x = (grid_x - viewport_start_x) * self.cell_size
-                screen_y = (grid_y - viewport_start_y) * self.cell_size
+        # Render all tiles in the grid
+        for grid_y in range(self.grid_size):
+            for grid_x in range(self.grid_size):
+                # Screen position (direct mapping, no camera offset)
+                screen_x = grid_x * self.cell_size
+                screen_y = grid_y * self.cell_size
 
                 # Render tile (wall or floor)
                 if grid[grid_y, grid_x] == 1:  # Wall
@@ -395,46 +360,26 @@ class PyGameRenderer:
                 else:  # Floor
                     self.screen.blit(self.sprites['floor'], (screen_x, screen_y))
 
-        # Render door (if in viewport)
+        # Render door
         door_pos = env_state.get('door_pos')
-        if door_pos is not None and self._is_in_viewport(door_pos):
-            self._render_entity_viewport(door_pos, 'door')
+        if door_pos is not None:
+            self._render_entity(door_pos, 'door')
 
-        # Render enemies (if in viewport)
+        # Render enemies
         enemy1_pos = env_state.get('enemy1_pos')
-        if enemy1_pos is not None and self._is_in_viewport(enemy1_pos):
-            self._render_entity_viewport(enemy1_pos, 'enemy')
+        if enemy1_pos is not None:
+            self._render_entity(enemy1_pos, 'enemy')
 
         enemy2_pos = env_state.get('enemy2_pos')
-        if enemy2_pos is not None and self._is_in_viewport(enemy2_pos):
-            self._render_entity_viewport(enemy2_pos, 'enemy')
+        if enemy2_pos is not None:
+            self._render_entity(enemy2_pos, 'enemy')
 
-        # Render agent (always on top, if in viewport - should always be visible)
-        if self._is_in_viewport(agent_pos):
-            self._render_entity_viewport(agent_pos, 'agent')
+        # Render agent (always on top)
+        self._render_entity(agent_pos, 'agent')
 
-    def _is_in_viewport(self, position: Tuple[int, int]) -> bool:
+    def _render_entity(self, position: Tuple[int, int], sprite_name: str):
         """
-        Check if a position is within the current camera viewport.
-
-        Args:
-            position: (y, x) position in grid coordinates
-
-        Returns:
-            True if position is visible in current viewport
-        """
-        y, x = position
-        viewport_start_x = int(self.camera_x)
-        viewport_start_y = int(self.camera_y)
-        viewport_end_x = viewport_start_x + self.viewport_tiles_width
-        viewport_end_y = viewport_start_y + self.viewport_tiles_height
-
-        return (viewport_start_x <= x < viewport_end_x and
-                viewport_start_y <= y < viewport_end_y)
-
-    def _render_entity_viewport(self, position: Tuple[int, int], sprite_name: str):
-        """
-        Render an entity at a given position relative to viewport.
+        Render an entity at a given position (full grid, no viewport).
 
         Args:
             position: (y, x) position in grid coordinates
@@ -442,12 +387,9 @@ class PyGameRenderer:
         """
         y, x = position
 
-        # Convert grid position to screen position (relative to viewport)
-        viewport_start_x = int(self.camera_x)
-        viewport_start_y = int(self.camera_y)
-
-        screen_x = (x - viewport_start_x) * self.cell_size
-        screen_y = (y - viewport_start_y) * self.cell_size
+        # Convert grid position to screen position (direct mapping)
+        screen_x = x * self.cell_size
+        screen_y = y * self.cell_size
 
         self.screen.blit(self.sprites[sprite_name], (screen_x, screen_y))
 

@@ -1,15 +1,15 @@
 """
-State Encoder Utility - 32×32 Grid with Global Vision
+State Encoder Utility - 16×16 Grid with Global Vision
 
-Encodes global 32×32 view observations into single integer states for tabular RL.
+Encodes global 16×16 view observations into single integer states for tabular RL.
 
 State Encoding Strategy (Feature-Based Encoding):
 We use the agent's and door's absolute positions to create unique states:
 
-- Agent position: 900 positions (30×30 interior grid, excluding walls)
-- Door position: 900 positions (30×30 interior grid, excluding walls)
+- Agent position: 196 positions (14×14 interior grid, excluding walls)
+- Door position: 196 positions (14×14 interior grid, excluding walls)
 
-Total state space: 900 × 900 = 810,000 states
+Total state space: 196 × 196 = 38,416 states
 
 This encoding includes both agent and door positions, allowing the agent to learn
 optimal policies that depend on where the door is located.
@@ -29,15 +29,15 @@ import numpy as np
 
 class StateEncoder:
     """
-    Encodes global 32×32 view observations into integer state indices.
+    Encodes global 16×16 view observations into integer state indices.
 
     Uses both agent and door absolute positions, making each unique combination
     a separate state for tabular RL.
 
     Attributes:
-        grid_size (int): Size of the grid (32×32)
-        interior_size (int): Size of interior (30×30, excluding walls)
-        state_space_size (int): Total state space size (810,000)
+        grid_size (int): Size of the grid (16×16)
+        interior_size (int): Size of interior (14×14, excluding walls)
+        state_space_size (int): Total state space size (38,416)
     """
 
     # Cell type constants (must match dungeon_env.py)
@@ -48,21 +48,21 @@ class StateEncoder:
     CELL_AGENT_ON_DOOR = 4
     CELL_ENEMY = 5
 
-    def __init__(self, grid_size: int = 32):
+    def __init__(self, grid_size: int = 16):
         """
         Initialize the state encoder.
 
         Args:
-            grid_size: Size of the square grid (default: 32)
+            grid_size: Size of the square grid (default: 16)
         """
         self.grid_size = grid_size
 
         # Interior positions (exclude border walls)
-        self.interior_size = grid_size - 2  # 30 for 32×32 grid
-        self.interior_positions = self.interior_size * self.interior_size  # 900
+        self.interior_size = grid_size - 2  # 14 for 16×16 grid
+        self.interior_positions = self.interior_size * self.interior_size  # 196
 
         # State space: agent_pos × door_pos
-        # 900 agent positions × 900 door positions = 810,000 states
+        # 196 agent positions × 196 door positions = 38,416 states
         self.state_space_size = self.interior_positions * self.interior_positions
 
     def _find_agent_position(self, global_view: np.ndarray) -> Tuple[int, int]:
@@ -119,11 +119,11 @@ class StateEncoder:
         Convert absolute (y, x) position to interior grid index.
 
         Args:
-            y: Y coordinate (1-30 for 32×32 grid)
-            x: X coordinate (1-30 for 32×32 grid)
+            y: Y coordinate (1-14 for 16×16 grid)
+            x: X coordinate (1-14 for 16×16 grid)
 
         Returns:
-            Interior index (0-899 for 30×30 interior)
+            Interior index (0-195 for 14×14 interior)
         """
         # Subtract 1 to convert from absolute to interior coordinates
         interior_y = y - 1
@@ -135,10 +135,10 @@ class StateEncoder:
         Convert interior grid index to absolute (y, x) position.
 
         Args:
-            index: Interior index (0-899)
+            index: Interior index (0-195)
 
         Returns:
-            Tuple (y, x) in absolute coordinates (1-30)
+            Tuple (y, x) in absolute coordinates (1-14)
         """
         interior_y = index // self.interior_size
         interior_x = index % self.interior_size
@@ -153,16 +153,16 @@ class StateEncoder:
 
         Args:
             observation: Dictionary containing:
-                - global_view: np.array(32, 32) - global view with cell types
+                - global_view: np.array(16, 16) - global view with cell types
             door_pos: Optional explicit door position (y, x). If provided, uses this instead of searching.
 
         Returns:
-            int: Unique state index (0 to 809,999)
+            int: Unique state index (0 to 38,415)
 
         Example:
             >>> encoder = StateEncoder()
             >>> obs = {
-            ...     'global_view': np.array(...),  # 32×32 grid
+            ...     'global_view': np.array(...),  # 16×16 grid
             ... }
             >>> state = encoder.encode(obs)
         """
@@ -181,7 +181,7 @@ class StateEncoder:
         agent_idx = self._position_to_interior_index(agent_y, agent_x)
         door_idx = self._position_to_interior_index(door_y, door_x)
 
-        # Combine into single state: agent_idx * 900 + door_idx
+        # Combine into single state: agent_idx * 196 + door_idx
         state = agent_idx * self.interior_positions + door_idx
 
         # Validate
@@ -197,7 +197,7 @@ class StateEncoder:
         This is the inverse of encode(). Useful for debugging and analysis.
 
         Args:
-            state: Integer state index (0 to 809,999)
+            state: Integer state index (0 to 38,415)
 
         Returns:
             Dictionary with:
@@ -208,7 +208,7 @@ class StateEncoder:
             >>> encoder = StateEncoder()
             >>> features = encoder.decode(1000)
             >>> print(features)
-            {'agent_pos': (2, 11), 'door_pos': (2, 11)}
+            {'agent_pos': (6, 5), 'door_pos': (6, 5)}
         """
         assert 0 <= state < self.state_space_size, \
             f"State {state} out of bounds [0, {self.state_space_size})"
@@ -231,7 +231,7 @@ class StateEncoder:
         Get the total theoretical state space size.
 
         Returns:
-            int: Total number of possible states (810,000)
+            int: Total number of possible states (38,416)
         """
         return self.state_space_size
 
