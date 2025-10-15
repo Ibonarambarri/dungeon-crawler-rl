@@ -15,7 +15,7 @@ Controls (Manual Mode):
 
 SIMPLIFIED VERSION:
 - No combat (ATTACK removed)
-- Goal: Collect key, then reach exit door
+- Goal: Reach exit door
 
 Usage:
     # Manual mode
@@ -117,7 +117,7 @@ class DungeonDemo:
         print("  [/]        - Decrease/Increase action cooldown (Manual speed)")
         print("  Q/ESC      - Quit")
         print()
-        print("GOAL: Collect key, then reach exit door")
+        print("GOAL: Reach exit door")
         print("=" * 60)
         print()
 
@@ -256,7 +256,7 @@ class DungeonDemo:
 
         print(f"\n=== Episode {self.episode_count} Started ===")
         print(f"Agent at: {info['agent_pos']}")  # Position is in info, not obs
-        print(f"Has key: {obs['has_key']}")
+        print(f"Distance to door: {info['dist_to_door']}")
 
         return obs, info
 
@@ -268,15 +268,15 @@ class DungeonDemo:
         print(f"{mode} Step {info['steps']:3d} | "
               f"Action: {action_names[action]:6s} | "
               f"Reward: {reward:6.1f} | "
-              f"Has Key: {obs['has_key']}")
+              f"Dist to Door: {info['dist_to_door']:2d}")
 
     def _print_episode_summary(self, terminated: bool, truncated: bool):
         """Print summary at end of episode (SIMPLIFIED)."""
         self.episode_rewards.append(self.total_reward)
 
         print("\n" + "=" * 60)
-        if terminated and self.total_reward > 500:
-            print("🎉 VICTORY! You reached the exit with the key!")
+        if terminated and self.total_reward > 50:
+            print("🎉 VICTORY! You reached the exit door!")
         elif terminated:
             print("❌ Episode ended.")
         else:

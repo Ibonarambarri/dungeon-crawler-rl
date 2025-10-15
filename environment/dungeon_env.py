@@ -6,16 +6,16 @@ A minimal custom Gymnasium environment for basic navigation with global vision.
 ULTRA-SIMPLIFIED for tabular RL:
 - 8×8 empty grid (only border walls)
 - Agent with global vision (sees entire board)
-- Only 2 elements: key and door
-- Reward structure (SPARSE ONLY):
-  * Key pickup: +10.0
-  * Door with key: +100.0 (victory)
-  * NO step penalties, NO reward shaping
+- Only 1 element: door/exit
+- Reward structure (SHAPED + SPARSE):
+  * Reach door: +100.0 (victory)
+  * Move closer: +1.0 - 0.1 = +0.9 (net positive)
+  * Move away: -1.0 - 0.1 = -1.1 (net negative, discourages loops)
+  * Step penalty: -0.1 (always applied)
 
 State Space:
 - Global view: Full 8×8 grid
-- Has key: binary (0 or 1)
-- Total states: 64 positions × 2 has_key = 128 states
+- Total states: 64 positions (agent position only)
 
 Action Space (4 movements):
 - 0: Move UP
@@ -37,14 +37,14 @@ class DungeonCrawlerEnv(gym.Env):
     Features:
     - 8×8 grid with only border walls
     - Global vision (sees entire board)
-    - Key collection and door escape objective
-    - Sparse rewards only (no shaping)
+    - Door escape objective (no key required)
+    - Distance-based reward shaping to guide learning
 
     Attributes:
         grid_size (int): Size of the square grid (8)
         max_steps (int): Maximum steps per episode (100)
         action_space: Discrete(4) - movement actions only
-        observation_space: Dict with global_view (8×8) and has_key
+        observation_space: Dict with global_view (8×8) only
     """
 
     metadata = {'render_modes': ['human', 'ansi', 'pygame'], 'render_fps': 10}
@@ -58,9 +58,9 @@ class DungeonCrawlerEnv(gym.Env):
     # Cell types for observation
     CELL_FLOOR = 0
     CELL_WALL = 1
-    CELL_KEY = 2
-    CELL_DOOR = 3
-    CELL_AGENT = 4
+    CELL_DOOR = 2
+    CELL_AGENT = 3
+    CELL_AGENT_ON_DOOR = 4  # Agent standing on door position
 
     def __init__(
         self,
@@ -99,12 +99,11 @@ class DungeonCrawlerEnv(gym.Env):
         # Define action space (4 movements)
         self.action_space = spaces.Discrete(4)
 
-        # Define observation space (global 8×8 view + has_key)
+        # Define observation space (global 8×8 view only)
         self.observation_space = spaces.Dict({
             'global_view': spaces.Box(
                 low=0, high=4, shape=(grid_size, grid_size), dtype=np.int32
-            ),
-            'has_key': spaces.Discrete(2)  # 0 or 1
+            )
         })
 
         # Grid (0=floor, 1=wall)
@@ -117,13 +116,11 @@ class DungeonCrawlerEnv(gym.Env):
         """Initialize all state variables to default values."""
         self.agent_pos = [1, 1]  # Will be overridden in reset()
 
-        # Items
-        self.has_key = False
-        self.key_on_map = True
-
         # Fixed positions
-        self.key_pos = (0, 0)
         self.door_pos = (0, 0)
+
+        # Distance tracking for reward shaping
+        self.prev_dist_to_door = 0
 
         # Episode tracking
         self.steps = 0
@@ -197,10 +194,12 @@ class DungeonCrawlerEnv(gym.Env):
         agent_pos_tuple = self._get_random_floor_position()
         self.agent_pos = list(agent_pos_tuple)
 
-        self.key_pos = self._get_random_floor_position(exclude_positions=[agent_pos_tuple])
         self.door_pos = self._get_random_floor_position(
-            exclude_positions=[agent_pos_tuple, self.key_pos]
+            exclude_positions=[agent_pos_tuple]
         )
+
+        # Initialize distance tracking for reward shaping
+        self.prev_dist_to_door = self._manhattan_dist(tuple(self.agent_pos), self.door_pos)
 
         observation = self._get_obs()
         info = self._get_info()
@@ -227,25 +226,35 @@ class DungeonCrawlerEnv(gym.Env):
         self.steps += 1
         self.last_action = action
 
-        # Initialize reward (NO step penalty - sparse rewards only)
-        reward = 0.0
+        # Initialize reward with step penalty (always applied)
+        reward = -0.1
 
         # Execute movement action
         if action in [self.ACTION_UP, self.ACTION_DOWN,
                      self.ACTION_LEFT, self.ACTION_RIGHT]:
             self._handle_movement(action)
 
-        # Check for key pickup
-        picked_up_key = self._check_item_pickup()
-        if picked_up_key:
-            reward += 10.0  # KEY REWARD
+        # Calculate current distance to door
+        current_dist = self._manhattan_dist(tuple(self.agent_pos), self.door_pos)
+
+        # Reward shaping based on distance change
+        if current_dist < self.prev_dist_to_door:
+            # Moved closer: +1.0 - 0.1 = +0.9 net
+            reward += 1.0
+        elif current_dist > self.prev_dist_to_door:
+            # Moved away: -1.0 - 0.1 = -1.1 net (discourages loops)
+            reward -= 1.0
+        # If distance stays same (hit wall): just -0.1 penalty
+
+        # Update previous distance for next step
+        self.prev_dist_to_door = current_dist
 
         # Check terminal conditions
         terminated = False
         truncated = False
 
-        # Win condition: has key AND reached door
-        if self.has_key and tuple(self.agent_pos) == self.door_pos:
+        # Win condition: reached door
+        if tuple(self.agent_pos) == self.door_pos:
             reward += 100.0  # DOOR REWARD (victory)
             terminated = True
 
@@ -294,23 +303,6 @@ class DungeonCrawlerEnv(gym.Env):
         # Valid move - update position
         self.agent_pos = new_pos
 
-    def _check_item_pickup(self) -> bool:
-        """
-        Check if agent picked up the key.
-
-        Returns:
-            bool: True if key was picked up this step
-        """
-        agent_pos_tuple = tuple(self.agent_pos)
-
-        # Check key pickup
-        if self.key_on_map and agent_pos_tuple == self.key_pos:
-            self.has_key = True
-            self.key_on_map = False
-            return True
-
-        return False
-
     def _manhattan_dist(self, pos1: Tuple[int, int], pos2: Tuple[int, int]) -> int:
         """
         Calculate Manhattan distance between two positions.
@@ -330,10 +322,11 @@ class DungeonCrawlerEnv(gym.Env):
 
         Returns:
             np.ndarray: 8×8 array with cell types:
-                0 = floor, 1 = wall, 2 = key, 3 = door, 4 = agent
+                0 = floor, 1 = wall, 2 = door, 3 = agent, 4 = agent on door
         """
         view = np.zeros((self.grid_size, self.grid_size), dtype=np.int32)
         agent_y, agent_x = self.agent_pos
+        agent_pos_tuple = tuple(self.agent_pos)
 
         # Fill view with entire grid
         for y in range(self.grid_size):
@@ -343,28 +336,28 @@ class DungeonCrawlerEnv(gym.Env):
                 # Check what's at this position
                 if self.grid[y, x] == 1:
                     view[y, x] = self.CELL_WALL
-                elif pos == self.key_pos and self.key_on_map:
-                    view[y, x] = self.CELL_KEY
                 elif pos == self.door_pos:
                     view[y, x] = self.CELL_DOOR
                 else:
                     view[y, x] = self.CELL_FLOOR
 
-        # Place agent on top
-        view[agent_y, agent_x] = self.CELL_AGENT
+        # Place agent (special case if agent is on door)
+        if agent_pos_tuple == self.door_pos:
+            view[agent_y, agent_x] = self.CELL_AGENT_ON_DOOR
+        else:
+            view[agent_y, agent_x] = self.CELL_AGENT
 
         return view
 
     def _get_obs(self) -> Dict[str, Any]:
         """
-        Get current observation (8×8 global view + has_key).
+        Get current observation (8×8 global view only).
 
         Returns:
-            observation: Dictionary with global_view and has_key
+            observation: Dictionary with global_view
         """
         return {
-            'global_view': self._get_global_view(),
-            'has_key': int(self.has_key)
+            'global_view': self._get_global_view()
         }
 
     def _get_info(self) -> Dict[str, Any]:
@@ -375,13 +368,10 @@ class DungeonCrawlerEnv(gym.Env):
             info: Dictionary with auxiliary information
         """
         agent_pos_tuple = tuple(self.agent_pos)
-        dist_to_key = self._manhattan_dist(agent_pos_tuple, self.key_pos) if self.key_on_map else 0
         dist_to_door = self._manhattan_dist(agent_pos_tuple, self.door_pos)
 
         return {
             'steps': self.steps,
-            'has_key': self.has_key,
-            'dist_to_key': dist_to_key,
             'dist_to_door': dist_to_door,
             'agent_pos': agent_pos_tuple  # For debugging
         }
@@ -402,9 +392,7 @@ class DungeonCrawlerEnv(gym.Env):
             env_state = {
                 'grid': self.grid,
                 'agent_pos': tuple(self.agent_pos),
-                'key_pos': self.key_pos if self.key_on_map else None,
                 'door_pos': self.door_pos,
-                'has_key': self.has_key,
                 'last_action': self.last_action,
                 'global_view': self._get_global_view()
             }
@@ -430,11 +418,6 @@ class DungeonCrawlerEnv(gym.Env):
                 if self.grid[y, x] == 1:
                     display_grid[y][x] = '#'
 
-        # Place key (if still on map)
-        if self.key_on_map:
-            y, x = self.key_pos
-            display_grid[y][x] = 'K'
-
         # Place door
         y, x = self.door_pos
         display_grid[y][x] = 'X'
@@ -459,9 +442,8 @@ class DungeonCrawlerEnv(gym.Env):
         output.append("=" * 50)
 
         # Print stats
-        items_str = "Key" if self.has_key else "None"
-        output.append(f"Items: {items_str}")
         output.append(f"Position: ({self.agent_pos[0]}, {self.agent_pos[1]})")
+        output.append(f"Distance to Door: {self._manhattan_dist(tuple(self.agent_pos), self.door_pos)}")
         output.append(f"Last Reward: {self.last_step_reward:.2f}")
 
         output.append("=" * 50)
@@ -506,8 +488,8 @@ def test_environment():
     obs, info = env.reset(seed=42)
     print(f"Observation keys: {obs.keys()}")
     print(f"Global view shape: {obs['global_view'].shape}")
-    print(f"Has key: {obs['has_key']}")
     print(f"Agent position: {info['agent_pos']}")
+    print(f"Distance to door: {info['dist_to_door']}")
     print("✓ Reset successful")
     print()
 
@@ -515,7 +497,7 @@ def test_environment():
     print("Test 3: Checking global view (8×8)")
     print("Global view (entire grid):")
     global_view = obs['global_view']
-    symbols = {0: '.', 1: '#', 2: 'K', 3: 'X', 4: '@'}
+    symbols = {0: '.', 1: '#', 2: 'X', 3: '@', 4: '$'}  # $ = agent on door
     for y in range(env.grid_size):
         print(' '.join([symbols[global_view[y, x]] for x in range(env.grid_size)]))
     print("✓ Global view correct")
@@ -531,7 +513,7 @@ def test_environment():
 
         action_names = ['UP', 'DOWN', 'LEFT', 'RIGHT']
         print(f"\nStep {step + 1}: Action={action_names[action]}, "
-              f"Reward={reward:.2f}, Has Key={obs['has_key']}")
+              f"Reward={reward:.2f}, Dist to Door={info['dist_to_door']}")
 
         if terminated or truncated:
             print(f"Episode ended: terminated={terminated}, truncated={truncated}")

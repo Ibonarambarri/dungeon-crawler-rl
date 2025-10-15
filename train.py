@@ -243,8 +243,8 @@ def train_episode(env, agent, encoder, algorithm: str) -> tuple:
         episode_reward += reward
         episode_length += 1
 
-    # Check if agent won (SIMPLIFIED - just check if terminated with positive reward)
-    # In simplified version: terminated means reached exit with key
+    # Check if agent won (SIMPLIFIED - just check if terminated)
+    # In simplified version: terminated means reached door
     if terminated:
         success = True
 

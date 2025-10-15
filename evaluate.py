@@ -165,8 +165,7 @@ def evaluate_episode(env, agent, encoder, render: bool = False, verbose: bool = 
     return {
         'reward': episode_reward,
         'length': episode_length,
-        'success': success,
-        'has_key': info['has_key']
+        'success': success
     }
 
 
@@ -218,7 +217,6 @@ def evaluate(args):
     rewards = [r['reward'] for r in results]
     lengths = [r['length'] for r in results]
     successes = [r['success'] for r in results]
-    has_keys = [r['has_key'] for r in results]
 
     # Print results
     print()
@@ -235,8 +233,6 @@ def evaluate(args):
     print(f"  Average length:    {np.mean(lengths):.1f} ± {np.std(lengths):.1f}")
     print(f"  Min length:        {np.min(lengths)}")
     print(f"  Max length:        {np.max(lengths)}")
-    print(f"\nFinal states:")
-    print(f"  Has key rate:      {np.mean(has_keys):.2%}")
 
     # Success analysis
     if sum(successes) > 0:
@@ -250,7 +246,7 @@ def evaluate(args):
         failed_episodes = [r for r in results if not r['success']]
         print(f"\nFailed episodes:")
         print(f"  Average reward:    {np.mean([r['reward'] for r in failed_episodes]):.2f}")
-        print(f"  Had key:           {sum(1 for r in failed_episodes if r['has_key'])}")
+        print(f"  Average length:    {np.mean([r['length'] for r in failed_episodes]):.1f}")
 
     print("=" * 70)
 

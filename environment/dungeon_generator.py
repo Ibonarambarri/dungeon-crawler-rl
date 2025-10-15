@@ -2,12 +2,12 @@
 Procedural Dungeon Generator - ULTRA-SIMPLIFIED VERSION
 
 Generates simple 8×8 empty dungeons with only border walls.
-Random spawn positions for agent, key, and door.
+Random spawn positions for agent and door.
 
 ULTRA-SIMPLIFIED for tabular RL:
 - Grid size: 8×8
 - Only border walls (no internal walls)
-- Only 3 spawn positions: agent, key, door
+- Only 2 spawn positions: agent, door
 
 Design:
 - ~56% floor (36 of 64 cells) - only borders are walls
@@ -61,7 +61,6 @@ class DungeonGenerator:
                 - walls: list of wall positions
                 - floor: list of floor positions
                 - agent_start: agent starting position (y, x)
-                - key_pos: key position (y, x)
                 - door_pos: door/exit position (y, x)
         """
         # Create empty grid with border walls
@@ -134,7 +133,7 @@ class DungeonGenerator:
 
     def _find_spawn_positions(self) -> dict:
         """
-        Find random positions for agent, key, and door.
+        Find random positions for agent and door.
 
         All positions are guaranteed to be:
         - On floor tiles (not walls)
@@ -142,22 +141,18 @@ class DungeonGenerator:
         - In the interior (not on borders)
 
         Returns:
-            dict: Positions for agent_start, key_pos, door_pos
+            dict: Positions for agent_start, door_pos
         """
         # Agent spawn
         agent_pos = self._get_random_floor_position()
 
-        # Key spawn (different from agent)
-        key_pos = self._get_random_floor_position(exclude_positions=[agent_pos])
-
-        # Door spawn (different from agent and key)
+        # Door spawn (different from agent)
         door_pos = self._get_random_floor_position(
-            exclude_positions=[agent_pos, key_pos]
+            exclude_positions=[agent_pos]
         )
 
         return {
             'agent_start': agent_pos,
-            'key_pos': key_pos,
             'door_pos': door_pos
         }
 
@@ -175,7 +170,6 @@ def test_generator():
     print(f"  Walls: {len(dungeon['walls'])}")
     print(f"  Floor tiles: {len(dungeon['floor'])}")
     print(f"  Agent start: {dungeon['agent_start']}")
-    print(f"  Key position: {dungeon['key_pos']}")
     print(f"  Door position: {dungeon['door_pos']}")
     print()
 
@@ -189,8 +183,6 @@ def test_generator():
                 row += '@'
             elif (y, x) == dungeon['door_pos']:
                 row += 'X'
-            elif (y, x) == dungeon['key_pos']:
-                row += 'K'
             elif grid[y, x] == 1:
                 row += '#'
             else:
